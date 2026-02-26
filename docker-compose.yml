@@ -1,0 +1,96 @@
+services:
+  # PostgreSQL Database
+  db:
+    image: postgres:16-alpine
+    container_name: event_planet_db
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    environment:
+      - POSTGRES_DB=event_planet_db
+      - POSTGRES_USER=event_planet_user
+      - POSTGRES_PASSWORD=1234
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - event_planet_network
+
+  # Redis
+  redis:
+    image: redis:7-alpine
+    container_name: event_planet_redis
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - event_planet_network
+
+  # Django Application
+  web:
+    build: .
+    container_name: event_planet_web
+    command: gunicorn config.wsgi:application --bind 0.0.0.0:8000 --workers 3
+    volumes:
+      - .:/app
+      - static_volume:/app/staticfiles
+      - media_volume:/app/media
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - event_planet_network
+
+  # Celery Worker
+  celery:
+    build: .
+    container_name: event_planet_celery
+    command: celery -A config worker -l info
+    volumes:
+      - .:/app
+    env_file:
+      - .env
+    depends_on:
+      - db
+      - redis
+      - web
+    networks:
+      - event_planet_network
+
+  # Celery Beat (for scheduled tasks)
+  celery-beat:
+    build: .
+    container_name: event_planet_celery_beat
+    command: celery -A config beat -l info
+    volumes:
+      - .:/app
+    env_file:
+      - .env
+    depends_on:
+      - db
+      - redis
+      - web
+    networks:
+      - event_planet_network
+
+volumes:
+  postgres_data:
+  static_volume:
+  media_volume:
+
+networks:
+  event_planet_network:
+    driver: bridge
